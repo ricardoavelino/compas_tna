@@ -2,7 +2,7 @@ import math
 from typing import Optional
 
 import numpy as np
-from compas_cgal.meshing import pull_points_on_mesh
+from compas_cgal.projection import pull_points_on_mesh
 from numpy import any
 from numpy import asarray
 from numpy import isnan

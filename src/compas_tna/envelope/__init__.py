@@ -7,6 +7,7 @@ from .crossvault import CrossVaultEnvelope
 from .dome import DomeEnvelope
 from .pavillionvault import PavillionVaultEnvelope
 from .pointedvault import PointedVaultEnvelope
+from .barrelvault import BarrelVaultEnvelope
 
 __all__ = [
     "Envelope",
@@ -17,4 +18,5 @@ __all__ = [
     "PointedVaultEnvelope",
     "DomeEnvelope",
     "CrossVaultEnvelope",
+    "BarrelVaultEnvelope",
 ]
