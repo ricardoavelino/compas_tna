@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 * Update docs to include envelope
+* Improved interpolate middle mesh for general meshes using CGAL
 
 ### Changed
 

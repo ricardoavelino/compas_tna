@@ -41,8 +41,6 @@ def create_circular_radial_mesh(center=(5.0, 5.0), radius=5.0, n_hoops=8, n_para
     r_div = (radius - r_oculus) / n_hoops
     lines = []
 
-    # indset = []  # TODO: Automate indset selection...
-
     for nr in range(n_hoops + 1):
         for nc in range(n_parallels):
             if (r_oculus + nr * r_div) > 0.0:

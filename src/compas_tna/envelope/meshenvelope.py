@@ -1,16 +1,22 @@
 import math
 from typing import Optional
 
+import numpy as np
+from compas_cgal.projection import pull_points_on_mesh
+from numpy import any
 from numpy import asarray
+from numpy import isnan
+from numpy import nan
 from scipy.interpolate import griddata
 
 from compas.datastructures import Mesh
+from compas.geometry import distance_point_point
 from compas_tna.diagrams import FormDiagram
 from compas_tna.envelope import Envelope
 
 
-def griddata_project(xy: list[list[float]], xyz_target: list[list[float]], method="linear"):
-    """Project a point cloud onto a target point cloud using griddata interpolation.
+def griddata_project(xy: list[list[float]], xyz_target: list[list[float]]) -> list[float]:
+    """Project a set of XY points onto a target point cloud using griddata interpolation.
 
     Parameters
     ----------
@@ -18,18 +24,25 @@ def griddata_project(xy: list[list[float]], xyz_target: list[list[float]], metho
         The XY coordinates of the points to project.
     xyz_target : list[list[float]]
         The XYZ coordinates of the target points.
-    method : str, optional
-        The method to use for interpolation. Default is "linear".
 
     Returns
     -------
     list[float]
-        The projected Z coordinates.
+        The interpolated (projected) Z coordinates.
     """
-    xy = asarray(xy)
-    xy_target = asarray(xyz_target)[:, :2]
-    z_target = asarray(xyz_target)[:, 2]
-    return griddata(xy_target, z_target, xy, method=method).tolist()
+    xy = np.asarray(xy)
+    xy_target = np.asarray(xyz_target)[:, :2]
+    z_target = np.asarray(xyz_target)[:, 2]
+
+    # Initial interpolation
+    z_proj = griddata(xy_target, z_target, xy, method="linear", fill_value=nan)
+
+    # Handle NaNs (outside convex hull)
+    mask = isnan(z_proj)
+    if any(mask):
+        z_proj[mask] = griddata(xy_target, z_target, xy[mask], method="nearest")
+
+    return z_proj.tolist()
 
 
 def interpolate_middle_mesh(intrados: Mesh, extrados: Mesh) -> Mesh:
@@ -50,27 +63,24 @@ def interpolate_middle_mesh(intrados: Mesh, extrados: Mesh) -> Mesh:
     Mesh
         The interpolated middle mesh with proper normal-based thickness stored.
     """
-    # Use the intrados as base topology
-    middle = intrados.copy()
 
-    # Get Z coordinates from both surfaces based on the same XY coordinates
-    zi = middle.vertices_attribute("z")
-    ze = griddata_project(middle.vertices_attributes("xy"), extrados.vertices_attributes("xyz"), method="linear")
+    points, faces = intrados.to_vertices_and_faces()
 
-    # First loop: set middle Z as average of intrados and extrados
-    for i, key in enumerate(middle.vertices()):
-        middle_z = (zi[i] + ze[i]) / 2.0
-        middle.vertex_attribute(key, "z", middle_z)
+    normals = [intrados.vertex_normal(key) for key in intrados.vertices()]
 
-    # Second loop: calculate and set thickness using correct normals
-    for i, key in enumerate(middle.vertices()):
-        _, _, nz = middle.vertex_normal(key)
-        z_diff = ze[i] - zi[i]
-        if abs(nz) > 0.1:
-            thickness = abs(z_diff) * abs(nz)
-        else:
-            thickness = abs(z_diff)
-        middle.vertex_attribute(key, "thickness", thickness)
+    pulled_points = pull_points_on_mesh(points, normals, extrados)
+
+    midpoints = []
+    thicknesses = []
+
+    for i, xyz in enumerate(pulled_points):
+        midpoints.append([(xyz[0] + points[i][0]) / 2, (xyz[1] + points[i][1]) / 2, (xyz[2] + points[i][2]) / 2])
+        thicknesses.append(distance_point_point(xyz, points[i]))
+
+    middle = Mesh.from_vertices_and_faces(midpoints, faces)
+
+    for i, vertex in enumerate(middle.vertices()):
+        middle.vertex_attribute(vertex, "thickness", thicknesses[i])
 
     return middle
 
@@ -134,46 +144,6 @@ def offset_from_middle(middle: Mesh, fixed_xy: bool = True) -> tuple[Mesh, Mesh]
     return intrados, extrados
 
 
-def project_mesh_to_target_vertica_nearest(mesh: Mesh, target: Mesh) -> None:
-    """Project a mesh vertically (in Z direction) onto a target mesh.
-
-    Parameters
-    ----------
-    mesh : Mesh
-        The mesh to be projected.
-    target : Mesh
-        The target mesh to project onto.
-
-    Returns
-    -------
-    None
-        The mesh is modified in place.
-    """
-    # Get target mesh vertices for simple vertical projection
-    target_vertices = list(target.vertices())
-    target_points = [target.vertex_point(v) for v in target_vertices]
-
-    for vertex in mesh.vertices():
-        point = mesh.vertex_point(vertex)
-
-        # Find the closest target vertex in XY plane
-        min_distance = float("inf")
-        closest_z = point.z
-
-        for target_point in target_points:
-            # Calculate XY distance (ignore Z)
-            xy_distance = ((point.x - target_point.x) ** 2 + (point.y - target_point.y) ** 2) ** 0.5
-
-            if xy_distance < min_distance:
-                min_distance = xy_distance
-                closest_z = target_point.z
-
-        # Update vertex to closest Z value
-        new_point = point.copy()
-        new_point.z = closest_z
-        mesh.vertex_attributes(vertex, "xyz", new_point)
-
-
 def project_mesh_to_target_vertical(mesh: Mesh, target: Mesh) -> None:
     """Project a mesh vertically (in Z direction) onto a target mesh.
 
@@ -189,7 +159,7 @@ def project_mesh_to_target_vertical(mesh: Mesh, target: Mesh) -> None:
     None
         The mesh is modified in place.
     """
-    z_target = griddata_project(mesh.vertices_attributes("xy"), target.vertices_attributes("xyz"), method="linear")
+    z_target = griddata_project(mesh.vertices_attributes("xy"), target.vertices_attributes("xyz"))
 
     for key, i in enumerate(mesh.vertices()):
         mesh.vertex_attribute(key, "z", z_target[i])
@@ -586,7 +556,10 @@ class MeshEnvelope(Envelope):
             else:
                 print(f"Warning: Vertex {vertex} not found in projected meshes")
 
-        print(f"Fill weight applied to form diagram. Total load: {fill_weight}")
+        sum_pz = sum(abs(asarray(formdiagram.vertices_attribute("pz"))))
+
+        print(f"Fill weight applied to form diagram. Fill load: {fill_weight:.1f}")
+        print(f"Total Load: {sum_pz:.1f}")
 
     # =============================================================================
     # Envelope and target projection operations
