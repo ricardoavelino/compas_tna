@@ -491,6 +491,9 @@ class MeshEnvelope(Envelope):
         form_ = formdiagram.copy()
         project_mesh_to_target_vertical(form_, self.middle)
 
+        for face in list(form_.faces_where(_is_loaded=False)):
+            form_.delete_face(face)
+
         # Step 5: Compute and lump selfweight at vertices
         total_pz = 0.0
         for vertex in form_.vertices():
@@ -527,6 +530,8 @@ class MeshEnvelope(Envelope):
         form_ub = formdiagram.copy()  # For lower bound (intrados)
         form_zero = formdiagram.copy()  # For zero bound (extrados)
         form_zero.vertices_attribute("z", 0.0)
+        for face in list(form_zero.faces_where(_is_loaded=False)):
+            form_zero.delete_face(face)
 
         # Step 3: Project form diagram onto extrados (upper bound)
         project_mesh_to_target_vertical(form_fill, self.fill)

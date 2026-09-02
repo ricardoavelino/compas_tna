@@ -133,6 +133,9 @@ class ParametricEnvelope(Envelope):
         for i, key in enumerate(form_.vertices()):
             form_.vertex_attribute(key, "z", zt[i])
 
+        for face in list(form_.faces_where(_is_loaded=False)):
+            form_.delete_face(face)
+
         # Step 4: Compute and lump selfweight at vertices
         total_pz = 0.0
         for vertex in form_.vertices():
