@@ -10,7 +10,6 @@ from numpy import nan
 from scipy.interpolate import griddata
 
 from compas.datastructures import Mesh
-from compas.geometry import distance_point_point
 from compas_tna.diagrams import FormDiagram
 from compas_tna.envelope import Envelope
 
@@ -101,8 +100,11 @@ def sanitize_envelope_mesh(mesh: Mesh, precision: Optional[int] = None) -> Mesh:
 def interpolate_middle_mesh(intrados: Mesh, extrados: Mesh) -> Mesh:
     """Interpolate a middle mesh between intrados and extrados meshes.
 
-    This function properly calculates thickness by considering the normal vector
-    at each point, ensuring accurate thickness measurements on curved surfaces.
+    The intrados vertices are projected vertically onto the extrados. The
+    resulting middle mesh therefore retains the XY coordinates and topology of
+    the intrados, including at creases. Local thickness is obtained by
+    correcting the vertical separation with the Z component of the middle-mesh
+    vertex normal.
 
     Parameters
     ----------
@@ -114,26 +116,29 @@ def interpolate_middle_mesh(intrados: Mesh, extrados: Mesh) -> Mesh:
     Returns
     -------
     Mesh
-        The interpolated middle mesh with proper normal-based thickness stored.
+        The interpolated middle mesh with normal-corrected thickness stored.
     """
 
     points, faces = intrados.to_vertices_and_faces()
 
-    normals = [intrados.vertex_normal(key) for key in intrados.vertices()]
-
-    pulled_points = pull_points_on_mesh(points, normals, extrados)
+    directions = [[0.0, 0.0, 1.0] for _ in points]
+    pulled_points = pull_points_on_mesh(points, directions, extrados)
 
     midpoints = []
-    thicknesses = []
+    vertical_gaps = []
 
-    for i, xyz in enumerate(pulled_points):
-        midpoints.append([(xyz[0] + points[i][0]) / 2, (xyz[1] + points[i][1]) / 2, (xyz[2] + points[i][2]) / 2])
-        thicknesses.append(distance_point_point(xyz, points[i]))
+    for lower, upper in zip(points, pulled_points):
+        vertical_gap = upper[2] - lower[2]
+        if vertical_gap <= 1e-8:
+            raise ValueError("Extrados must be vertically above the intrados at every intrados vertex.")
+        midpoints.append([lower[0], lower[1], 0.5 * (lower[2] + upper[2])])
+        vertical_gaps.append(vertical_gap)
 
     middle = Mesh.from_vertices_and_faces(midpoints, faces)
 
-    for i, vertex in enumerate(middle.vertices()):
-        middle.vertex_attribute(vertex, "thickness", thicknesses[i])
+    for vertex, vertical_gap in zip(middle.vertices(), vertical_gaps):
+        nz = abs(middle.vertex_normal(vertex)[2])
+        middle.vertex_attribute(vertex, "thickness", vertical_gap * nz)
 
     return middle
 
