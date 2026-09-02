@@ -45,6 +45,59 @@ def griddata_project(xy: list[list[float]], xyz_target: list[list[float]]) -> li
     return z_proj.tolist()
 
 
+def sanitize_envelope_mesh(mesh: Mesh, precision: Optional[int] = None) -> Mesh:
+    """Prepare an input mesh for use as an envelope surface.
+
+    The input mesh is copied, coincident vertices are welded, the resulting
+    topology is validated, adjacent face cycles are unified, and the mesh is
+    oriented such that its area-weighted average normal points upward.
+
+    This function does not remesh the surface or modify the input mesh. It also
+    does not verify that the surface is single-valued in the vertical direction.
+
+    Parameters
+    ----------
+    mesh : :class:`compas.datastructures.Mesh`
+        The envelope mesh to sanitize.
+    precision : int, optional
+        The precision used by :meth:`Mesh.weld` to identify coincident vertices.
+
+    Returns
+    -------
+    :class:`compas.datastructures.Mesh`
+        A sanitized copy of the input mesh.
+
+    Raises
+    ------
+    ValueError
+        If welding produces degenerate faces, or if the resulting mesh is
+        disconnected, non-manifold, or cannot be cycle-unified.
+
+    """
+    mesh_ = mesh.copy(cls=Mesh)
+    mesh_.weld(precision=precision)
+
+    degenerate = [face for face in mesh_.faces() if len(mesh_.face_vertices(face)) < 3 or mesh_.face_area(face) <= 0.0]
+    if degenerate:
+        raise ValueError(f"Envelope mesh has degenerate faces after welding: {degenerate}")
+
+    if not mesh_.is_connected():
+        raise ValueError("Envelope mesh must be connected after welding.")
+
+    if not mesh_.is_manifold():
+        raise ValueError("Envelope mesh must be manifold after welding.")
+
+    try:
+        mesh_.unify_cycles()
+    except Exception as error:
+        raise ValueError("Envelope mesh face cycles could not be unified.") from error
+
+    if mesh_.normal()[2] < 0.0:
+        mesh_.flip_cycles()
+
+    return mesh_
+
+
 def interpolate_middle_mesh(intrados: Mesh, extrados: Mesh) -> Mesh:
     """Interpolate a middle mesh between intrados and extrados meshes.
 
@@ -254,12 +307,12 @@ class MeshEnvelope(Envelope):
 
         """
         envelope = cls()
-        envelope.intrados = intrados
-        envelope.extrados = extrados
+        envelope.intrados = sanitize_envelope_mesh(intrados)
+        envelope.extrados = sanitize_envelope_mesh(extrados)
         if middle is not None:
-            envelope.middle = middle
+            envelope.middle = sanitize_envelope_mesh(middle)
         else:
-            envelope.middle = interpolate_middle_mesh(intrados, extrados)
+            envelope.middle = interpolate_middle_mesh(envelope.intrados, envelope.extrados)
 
         return envelope
 
@@ -269,10 +322,10 @@ class MeshEnvelope(Envelope):
 
         Parameters
         ----------
-        formdiagram : FormDiagram
-            The form diagram to create the envelope from.
+        mesh : :class:`compas.datastructures.Mesh`
+            The middle mesh from which to create the envelope.
         thickness : float, optional
-            The thickness of the envelope. If None, uses thickness values stored in formdiagram vertices.
+            The thickness of the envelope. If None, uses thickness values stored on the mesh vertices.
 
         Returns
         -------
@@ -281,15 +334,15 @@ class MeshEnvelope(Envelope):
         """
         envelope = cls()
 
-        envelope.middle = mesh.copy(cls=Mesh)
+        envelope.middle = sanitize_envelope_mesh(mesh)
 
         if thickness is not None:
             envelope.thickness = thickness
 
             # Create intrados and extrados using thickness from middle mesh
             intrados, extrados = offset_from_middle(envelope.middle)
-            envelope.intrados = intrados
-            envelope.extrados = extrados
+            envelope.intrados = sanitize_envelope_mesh(intrados)
+            envelope.extrados = sanitize_envelope_mesh(extrados)
 
         return envelope
 
